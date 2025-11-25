@@ -2,7 +2,8 @@ import dotenv from "dotenv";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import express, { type Request } from "express";
+import express from "express";
+import type { Request, Response } from "express";
 import { Resend } from "resend";
 
 dotenv.config();
@@ -77,11 +78,11 @@ function isAllowedReferer(req: Request) {
   );
 }
 
-app.get("/api/build", async (req, res) => {
+app.get("/api/build", (req: Request, res: Response) => {
   return res.status(200).json({ status: "success", message: "Sunucu aktif" });
 });
 
-app.post("/api/contact", rateLimiter, async (req, res) => {
+app.post("/api/contact", rateLimiter, async (req: Request, res: Response) => {
   if (!isAllowedReferer(req)) {
     return res.status(403).json({
       status: "error",
