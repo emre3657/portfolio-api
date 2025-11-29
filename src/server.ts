@@ -13,6 +13,9 @@ const port = process.env.PORT || 3000;
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+// trust upstream
+app.set("trust proxy", 3);
+
 // global
 app.use(helmet());
 
@@ -79,14 +82,24 @@ function isAllowedReferer(req: Request) {
 }
 
 app.get("/api/build", (req: Request, res: Response) => {
-  return res.status(200).json({ status: "success", message: "Sunucu aktif" });
+  return res
+    .status(200)
+    .json({ status: "success", message: "server is active" });
 });
 
 app.post("/api/contact", rateLimiter, async (req: Request, res: Response) => {
   if (!isAllowedReferer(req)) {
+    console.warn("[INVALID REQUEST]", {
+      path: req.path,
+      referer: req.headers.referer,
+      ip: req.ip,
+      at: new Date().toISOString(),
+    });
+
     return res.status(403).json({
       status: "error",
-      message: "Geçersiz istek.",
+      message: "Geçersiz istek!",
+      code: "INVALID_REQUEST",
     });
   }
 
@@ -97,23 +110,46 @@ app.post("/api/contact", rateLimiter, async (req: Request, res: Response) => {
     message: string;
     honeypot: string;
   };
+
   const { name, email, subject, message, honeypot }: Payload = req.body || {};
 
   // Honeypot bot check
   if (honeypot) {
+    console.warn("[HONEYPOT TRIGGERED]", {
+      email,
+      ip: req.ip,
+      at: new Date().toISOString(),
+    });
+
     return res.status(200).json({ status: "success" });
   }
 
+  // Basic validation
   if (!name || !email || !subject || !message) {
+    console.warn("[BAD REQUEST]", {
+      body: req.body,
+      missingFields: { name, email, subject, message },
+      at: new Date().toISOString(),
+    });
+
     return res.status(400).json({
       status: "error",
-      message: "Tüm alanlar zorunlu.",
+      message: "Tüm alanlar zorunlu!",
+      code: "BAD_REQUEST",
     });
   }
 
+  console.log("[CONTACT RECEIVED]", {
+    name,
+    email,
+    subject,
+    ip: req.ip,
+    at: new Date().toISOString(),
+  });
+
   try {
-    // mait to me
-    await resend.emails.send({
+    // 1) Mail to admin (me)
+    const { data: adminMail, error: adminError } = await resend.emails.send({
       from: "Portfolio Contact <contact@mail.emreekincidev.com>",
       to: "emree3657@gmail.com",
       subject: `Yeni Mesaj: ${subject}`,
@@ -128,8 +164,30 @@ app.post("/api/contact", rateLimiter, async (req: Request, res: Response) => {
       `,
     });
 
-    // oto mail
-    await resend.emails.send({
+    if (adminError) {
+      console.error("[ADMIN MAIL FAILED]", {
+        name,
+        email,
+        reason: adminError,
+        at: new Date().toISOString(),
+      });
+
+      return res.status(502).json({
+        status: "error",
+        message:
+          "Şu anda mesajını iletemiyorum. Lütfen biraz sonra tekrar dene.",
+        code: "ADMIN_MAIL_FAILED",
+      });
+    }
+
+    console.log("[ADMIN MAIL SUCCESS]", {
+      mailId: adminMail?.id,
+      from: email,
+      at: new Date().toISOString(),
+    });
+
+    // 2) Auto-reply mail
+    const { data: autoMail, error: autoError } = await resend.emails.send({
       from: "Emre Ekinci <contact@mail.emreekincidev.com>",
       to: email,
       subject: "Mesajınız alındı ✔",
@@ -144,16 +202,51 @@ app.post("/api/contact", rateLimiter, async (req: Request, res: Response) => {
       `,
     });
 
+    if (autoError) {
+      console.error("[AUTO-REPLY FAILED]", {
+        email,
+        reason: autoError,
+        adminMailId: adminMail?.id,
+        at: new Date().toISOString(),
+      });
+
+      return res.status(200).json({
+        status: "success",
+        message:
+          "Mesajın bana ulaştı fakat e-posta adresine otomatik yanıt gönderemedim. Adresi kontrol edebilirsin.",
+        code: "AUTO_REPLY_FAILED",
+        meta: {
+          adminMailId: adminMail?.id,
+        },
+      });
+    }
+
+    console.log("[AUTO-REPLY SUCCESS]", {
+      mailId: autoMail?.id,
+      to: email,
+      at: new Date().toISOString(),
+    });
+
+    // Final response
     return res.status(200).json({
       status: "success",
       message: "Mesaj iletildi. Otomatik yanıt gönderildi.",
+      code: "OK",
+      meta: {
+        adminMailId: adminMail?.id,
+        autoMailId: autoMail?.id,
+      },
     });
   } catch (error) {
-    console.error("Resend error:", error);
+    console.error("[UNEXPECTED ERROR]", {
+      error,
+      at: new Date().toISOString(),
+    });
 
     return res.status(500).json({
       status: "error",
-      message: "Mail gönderilemedi.",
+      message: "Beklenmeyen bir hata oluştu.",
+      code: "UNEXPECTED_ERROR",
     });
   }
 });
