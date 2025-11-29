@@ -211,7 +211,7 @@ app.post("/api/contact", rateLimiter, async (req: Request, res: Response) => {
       });
 
       return res.status(200).json({
-        status: "success",
+        status: "warning",
         message:
           "Mesajın bana ulaştı fakat e-posta adresine otomatik yanıt gönderemedim. Adresi kontrol edebilirsin.",
         code: "AUTO_REPLY_FAILED",
